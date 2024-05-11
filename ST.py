@@ -303,6 +303,10 @@ class Conv_Block(torch.nn.Module):
     def forward(self, x):
         return self.Block(x)
 
+    def info(self,
+             input=torch.zeros((1, 3, 270, 480))):
+        return torchsummary.summary(self.block, input)
+
 
 class Up_Conv(torch.nn.Module):
     def __init__(
@@ -342,6 +346,10 @@ class Up_Conv(torch.nn.Module):
     ):
         return self.block(tensor)
 
+    def info(self,
+             input=torch.zeros((1, 3, 270, 480))):
+        return torchsummary.summary(self.block, input)
+
 
 class Conv(torch.nn.Module):
     def __init__(
@@ -374,6 +382,10 @@ class Conv(torch.nn.Module):
             tensor
     ):
         return self.block(tensor)
+
+    def info(self,
+             input=torch.zeros((1, 3, 270, 480))):
+        return torchsummary.summary(self.block, input)
 
 
 def jpg_tensor(image):
