@@ -170,6 +170,9 @@ class Model_Using(torch.nn.Module):
     def Info(self, input_shape):
         return torchsummary.summary(self.Model, torch.zeros(input_shape))
 
+    def get_model(self):
+        return self.Model
+
 
 class Residual_Block(torch.nn.Module):
     def __init__(
