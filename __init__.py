@@ -2,21 +2,10 @@ import torch
 from collections import OrderedDict
 import matplotlib.pyplot as plt
 from IPython.display import clear_output
-import pandas as pd
-
-import requests
 from torchvision import transforms
 from PIL import Image
-
 from os import listdir
-
-import cv2
-import numpy as np
-import os
-
-import sys
 import torchsummary
-
 
 class Regularization:
     def __init__(self, model):
@@ -63,7 +52,7 @@ class Model_Using(torch.nn.Module):
         super().__init__()
         self.device = device
         self.dtype = dtype
-        self.Model = model.to(device=self.device, dtype=self.dtype)
+        self.Model = model.to(device=self.device)
         self.is_trained = False
         self.regularizator = Regularization(self.Model)
 
@@ -80,6 +69,7 @@ class Model_Using(torch.nn.Module):
             use_reg=False,
             reg_level=1,
             reg_lamb=1e-4,
+            optimizer = 0,
             is_sched_use=True,
             scheduler_freq=500,
             scheduler_gamma=0.5,
@@ -87,9 +77,9 @@ class Model_Using(torch.nn.Module):
             show_every=50,
     ):
         self.optimizer = torch.optim.SGD(
-            self.Model.parametres(),
+            self.Model.parameters(),
             lr=learning_rate
-        )
+        ) if optimizer == 0 else torch.optim.Adam(self.Model.parameters(), lr=learning_rate)
 
         self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer,
                                                                 gamma=scheduler_gamma)
@@ -99,14 +89,16 @@ class Model_Using(torch.nn.Module):
         val_batch_size = min(val_X.shape[0], batch_size)
 
         for epoch in range(1, num_of_epochs + 1):
+            print(f"{epoch} epoch now")
+
             self.optimizer.zero_grad()
             batch = torch.randint(high=train_X.shape[0], size=[batch_size])
 
             y_pred = self.Model(train_X[batch].to(self.device))
-            train_loss = loss_func(y_pred, train_y[batch]) + self.regularizator.Regularization(
+            train_loss = (loss_func(y_pred, train_y[batch]) + self.regularizator.Regularization(
                 level=reg_level,
                 lamb=reg_lamb,
-            ) * use_reg
+            ) * use_reg).to(self.device)
 
             train_loss.backward()
             self.optimizer.step()
@@ -116,8 +108,8 @@ class Model_Using(torch.nn.Module):
             if epoch % val_every == 0:
                 with torch.no_grad():
                     val_batch = torch.randint(high=val_X.shape[0], size=[val_batch_size])
-                    val_pred = self.Model(val_X[val_batch])
-                    val_loss = loss_func(val_pred, val_y[batch])
+                    val_pred = self.Model(val_X[val_batch].to(self.device))
+                    val_loss = loss_func(val_pred, val_y[val_batch]).to(self.device)
 
                     losses["val"].append(val_loss.item())
 
@@ -135,6 +127,8 @@ class Model_Using(torch.nn.Module):
 
             if epoch % scheduler_freq == 0 and is_sched_use:
                 self.scheduler.step()
+
+        print("Teaching has been complete successfully")
 
         self.is_trained = True
 
@@ -288,6 +282,7 @@ class Conv_Block(torch.nn.Module):
             kernel_size=3,
             activation=torch.nn.ReLU(),
             dropout=0.2,
+            padding = 1,
             max_pooling=2,
     ):
         super().__init__()
@@ -297,6 +292,7 @@ class Conv_Block(torch.nn.Module):
                 in_channels=input_channels,
                 out_channels=output_channels,
                 kernel_size=kernel_size,
+                padding = padding,
             )),
             ("Activation Func", activation),
             ("Batch Normalization", torch.nn.BatchNorm2d(output_channels)),
@@ -305,10 +301,6 @@ class Conv_Block(torch.nn.Module):
 
     def forward(self, x):
         return self.Block(x)
-
-    def info(self,
-             input=torch.zeros((1, 3, 270, 480))):
-        return torchsummary.summary(self.block, input)
 
 
 class Up_Conv(torch.nn.Module):
@@ -327,6 +319,10 @@ class Up_Conv(torch.nn.Module):
         super().__init__()
 
         self.block = torch.nn.Sequential(OrderedDict([
+            ("Upscampling", torch.nn.Upsample(
+                scale_factor=scale_factor,
+                mode=mode,
+            )),
             ("Convolution", torch.nn.Conv2d(
                 in_channels=input_channels,
                 out_channels=output_channels,
@@ -337,10 +333,6 @@ class Up_Conv(torch.nn.Module):
             )),
             ("Normalization", torch.nn.BatchNorm2d(output_channels)),
             ("Activation", activation_func),
-            ("Upscampling", torch.nn.Upsample(
-                scale_factor=scale_factor,
-                mode=mode,
-            )),
         ]))
 
     def forward(
@@ -348,10 +340,6 @@ class Up_Conv(torch.nn.Module):
             tensor
     ):
         return self.block(tensor)
-
-    def info(self,
-             input=torch.zeros((1, 3, 270, 480))):
-        return torchsummary.summary(self.block, input)
 
 
 class Conv(torch.nn.Module):
@@ -361,13 +349,15 @@ class Conv(torch.nn.Module):
             output_channels,
             kernel_size=3,
             stride=1,
-            padding=1,
+            padding=0,
             activation=torch.nn.ReLU(),
             bias=True,
+            dropout = 0.4,
     ):
         super().__init__()
 
         self.block = torch.nn.Sequential(OrderedDict([
+            ("Dropout", torch.nn.Dropout(dropout)),
             ("Convolution", torch.nn.Conv2d(
                 in_channels=input_channels,
                 out_channels=output_channels,
@@ -386,14 +376,43 @@ class Conv(torch.nn.Module):
     ):
         return self.block(tensor)
 
-    def info(self,
-             input=torch.zeros((1, 3, 270, 480))):
-        return torchsummary.summary(self.block, input)
+
+class Down_Conv(torch.nn.Module):
+    def __init__(
+            self,
+            num_of_blocks,
+            input_channels,
+            output_channels,
+            kernel_size=3,
+            last_kernel=3,
+            pooling_size=2,
+            last_padding=1,
+            padding=1,
+            dropout=0.2,
+    ):
+        super().__init__()
+        conv_blocks = []
+
+        for current_block in range(num_of_blocks):
+            conv_blocks.append(Conv(
+                input_channels=input_channels if current_block == 0 else output_channels,
+                output_channels=output_channels,
+                kernel_size=kernel_size if current_block != 0 else last_kernel,
+                padding= padding if current_block != 0 else last_padding,
+                dropout=dropout,
+            ))
+
+        conv_blocks.append(torch.nn.MaxPool2d(pooling_size))
+
+        self.block = torch.nn.Sequential(*conv_blocks)
+
+    def forward(self, x):
+        return self.block(x)
 
 
 def jpg_tensor(image):
     transform = transforms.Compose([transforms.ToTensor()])
-    return transform(Image.open(image))
+    return transform(Image.open(image).convert('RGB'))
 
 
 def imshow(tensor):
