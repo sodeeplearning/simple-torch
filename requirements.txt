@@ -1,0 +1,4 @@
+torch==2.2.2
+opencv-python==4.9.0.80
+jupyter==1.0.0
+torch_summary==1.4.5
